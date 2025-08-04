@@ -4,12 +4,12 @@ from typing import Literal
 from scipy.stats import norm
 
 class Option(BaseModel):
-    S: float = Field(..., description="Current price of the underlying asset")
-    K: float = Field(..., description="Strike price of the option")
-    T_days: float = Field(..., description="Time to expiration (in days)")
-    r: float = Field(..., description="Risk-free interest rate (annual)")
-    sigma: float = Field(..., description="Volatility of the underlying asset (annual)")
-    dividend: float = Field(0.0, description="Continuous dividend yield (annual, default is 0)")
+    S: float = Field(..., gt=0, description="Current price of the underlying asset (must be > 0)")
+    K: float = Field(..., gt=0, description="Strike price of the option (must be > 0)")
+    T_days: float = Field(..., gt=0, description="Time to expiration in days (must be > 0)")
+    r: float = Field(..., ge=0, description="Risk-free interest rate (annual, must be >= 0)")
+    sigma: float = Field(..., gt=0, description="Volatility (annual, must be > 0)")
+    dividend: float = Field(0.0, ge=0, description="Continuous dividend yield (annual, default is 0, must be >= 0)")
     option_type: Literal['call', 'put'] = Field(..., description="Type of option: 'call' or 'put'")
 
     model_config = {
@@ -37,8 +37,8 @@ class Option(BaseModel):
         d2 = self.__d2()
 
         if self.option_type == 'call':
-            return (self.S * math.exp(-self.dividend * self.T)
-            * norm.cdf(d1) - self.K * math.exp(-self.r * self.T) * norm.cdf(d2))
+            return round((self.S * math.exp(-self.dividend * self.T)
+            * norm.cdf(d1) - self.K * math.exp(-self.r * self.T) * norm.cdf(d2)),2)
         else:  # put
-            return (self.K * math.exp(-self.r * self.T) * norm.cdf(-d2)
-                     - self.S * math.exp(-self.dividend * self.T) * norm.cdf(-d1))
+            return round((self.K * math.exp(-self.r * self.T) * norm.cdf(-d2)
+                     - self.S * math.exp(-self.dividend * self.T) * norm.cdf(-d1)),2)
