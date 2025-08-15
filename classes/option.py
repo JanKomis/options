@@ -2,6 +2,56 @@ import math
 from pydantic import BaseModel, Field, computed_field
 from typing import Literal
 from scipy.stats import norm
+from math import log, exp, sqrt
+
+try:
+    from numba import njit
+
+    @njit(cache=True, fastmath=True)
+    def _phi(x):
+        # CDF standardního normálu přes erf
+        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+    @njit(cache=True, fastmath=True)
+    def bs_price_scalar(S, K, T, r, q, sig, is_call):
+        sqrtT = math.sqrt(T)
+        sigsqrt = sig * sqrtT
+        inv_sigsqrt = 1.0 / sigsqrt
+
+        d1 = (math.log(S / K) + (r - q + 0.5 * sig * sig) * T) * inv_sigsqrt
+        d2 = d1 - sigsqrt
+
+        e_qT = math.exp(-q * T)
+        e_rT = math.exp(-r * T)
+
+        if is_call:
+            return S * e_qT * _phi(d1) - K * e_rT * _phi(d2)
+        else:
+            return K * e_rT * _phi(-d2) - S * e_qT * _phi(-d1)
+
+    NUMBA_OK = True
+except Exception:
+    def _phi(x):
+        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+    def bs_price_scalar(S, K, T, r, q, sig, is_call):
+        sqrtT = math.sqrt(T)
+        sigsqrt = sig * sqrtT
+        inv_sigsqrt = 1.0 / sigsqrt
+
+        d1 = (math.log(S / K) + (r - q + 0.5 * sig * sig) * T) * inv_sigsqrt
+        d2 = d1 - sigsqrt
+
+        e_qT = math.exp(-q * T)
+        e_rT = math.exp(-r * T)
+
+        if is_call:
+            return S * e_qT * _phi(d1) - K * e_rT * _phi(d2)
+        else:
+            return K * e_rT * _phi(-d2) - S * e_qT * _phi(-d1)
+
+    NUMBA_OK = False
+
 
 class Option(BaseModel):
     S: float = Field(..., gt=0, description="Current price of the underlying asset (must be > 0)")
@@ -33,7 +83,8 @@ class Option(BaseModel):
     @property
     def _dividend(self) -> float:
         return self.dividend / 100.0
-
+    
+    """
     def __d1(self) -> float:
         return (
             math.log(self.S / self.K)
@@ -60,3 +111,11 @@ class Option(BaseModel):
                 - self.S * math.exp(-self._dividend * self.T) * norm.cdf(-d1),
                 2
             )
+    """
+    def price(self) -> float:
+        # voláme Numba-jitovanou scalar funkci
+        p = bs_price_scalar(
+            self.S, self.K, self.T, self._r, self._dividend, self._sigma,
+            self.option_type == 'call'
+        )
+        return round(p, 2)
