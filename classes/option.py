@@ -66,7 +66,7 @@ def bs_greeks_scalar(S, K, T, r, q, sig, is_call):
     """
     Returns (delta, gamma, theta_daily, vega_per_1pct, rho_per_1pct)
 
-    - theta_daily: **daily** theta (annual theta / 365). Negative = time decay.
+    - theta_daily: daily theta (annual theta / 365). Negative = time decay.
     - vega_per_1pct: price change for a 1 percentage point (1%) change in volatility.
     - rho_per_1pct: price change for a 1 percentage point (1%) change in risk-free rate.
     """
@@ -99,18 +99,17 @@ def bs_greeks_scalar(S, K, T, r, q, sig, is_call):
     theta_daily = theta_annual / 365.0
 
     # Vega: per 1 percentage point
-    vega_raw = S * e_qT * pdf_d1 * sqrtT   # for 1.00 (100%) change in σ
+    vega_raw = S * e_qT * pdf_d1 * sqrtT   # for 100% change in σ
     vega_per_1pct = vega_raw / 100.0       # for 1%
 
     # Rho: per 1 percentage point
     if is_call:
-        rho_raw = K * T * e_rT * _phi(d2)  # for 1.00 (100%) change in r
+        rho_raw = K * T * e_rT * _phi(d2)  # for 100% change in r
     else:
         rho_raw = -K * T * e_rT * _phi(-d2)
     rho_per_1pct = rho_raw / 100.0         # for 1%
 
     return delta, gamma, theta_daily, vega_per_1pct, rho_per_1pct
-
 
 @njit(cache=True, fastmath=True)
 def bs_greeks_strikes(S, T, r, q, sig, is_call, K_arr):
@@ -171,6 +170,27 @@ def bs_greeks_strikes(S, T, r, q, sig, is_call, K_arr):
 
     return delta_out, gamma_out, theta_out, vega_out, rho_out
 
+# =========================
+# Zero-time (intrinsic) prices
+# =========================
+
+@njit(cache=True, fastmath=True)
+def intrinsic_prices_strikes(S, is_call, K_arr):
+    """
+    Intrinsic value of the option for an array of strikes at time T=0.
+    Independent of r, q, sigma.
+    """
+    n = K_arr.size
+    out = np.empty(n, dtype=np.float64)
+    if is_call:
+        for i in range(n):
+            diff = S - K_arr[i]
+            out[i] = diff if diff > 0.0 else 0.0
+    else:
+        for i in range(n):
+            diff = K_arr[i] - S
+            out[i] = diff if diff > 0.0 else 0.0
+    return out
 
 # =========================
 # Option class (Pydantic v2)
@@ -193,12 +213,12 @@ class Option(BaseModel):
     @computed_field
     @property
     def T(self) -> float:
-        # convert days to years
+        # Convert days to years
         return self.T_days / 365.0
 
     @property
     def _r(self) -> float:
-        # internal decimal format
+        # Internal decimal format
         return self.r / 100.0
 
     @property
@@ -213,6 +233,14 @@ class Option(BaseModel):
     # Option price
     # -------------
     def price(self) -> float:
+        # If option created with T_days=0, handle intrinsic value
+        if self.T <= 0.0:
+            if self.option_type == 'call':
+                p = max(self.S - self.K, 0.0)
+            else:
+                p = max(self.K - self.S, 0.0)
+            return round(p, 2)
+
         p = bs_price_scalar(
             self.S, self.K, self.T, self._r, self._dividend, self._sigma,
             self.option_type == 'call'
@@ -222,11 +250,31 @@ class Option(BaseModel):
     def price_for_strikes(self, strikes: np.ndarray) -> np.ndarray:
         """
         Takes a list/ndarray of strikes and returns an ndarray of prices (rounded to 2 decimals).
+        If T≈0, returns intrinsic values instead of BS (to avoid division by zero).
         """
         K_arr = np.asarray(strikes, dtype=np.float64)
-        prices = bs_price_strikes(
-            self.S, self.T, self._r, self._dividend, self._sigma,
-            self.option_type == 'call', K_arr
+
+        # Tolerance for numerical "zero" to prevent division by zero in BS
+        if self.T <= 1e-12:
+            prices = intrinsic_prices_strikes(
+                self.S, self.option_type == 'call', K_arr
+            )
+        else:
+            prices = bs_price_strikes(
+                self.S, self.T, self._r, self._dividend, self._sigma,
+                self.option_type == 'call', K_arr
+            )
+        return np.round(prices, 2)
+
+    # Optional: explicit method for T=0
+    def price_for_strikes_zero_time(self, strikes: np.ndarray) -> np.ndarray:
+        """
+        Intrinsic value (T=0) for an array of strikes.
+        Same format as price_for_strikes (rounded to 2 decimals).
+        """
+        K_arr = np.asarray(strikes, dtype=np.float64)
+        prices = intrinsic_prices_strikes(
+            self.S, self.option_type == 'call', K_arr
         )
         return np.round(prices, 2)
 
@@ -270,7 +318,7 @@ class Option(BaseModel):
 
     def rho(self) -> float:
         """
-        Rho: price change for a 1 percentage point (1%) change in the risk-free rate r.
+        Rho: price change for a 1 percentage point change in the risk-free rate r.
         """
         _, _, _, _, r_ = bs_greeks_scalar(
             self.S, self.K, self.T, self._r, self._dividend, self._sigma,
