@@ -1,4 +1,5 @@
 import streamlit as st
+from classes.option import Option
 
 # Inicializace defaultních hodnot – pouze jednou
 if "S" not in st.session_state:
@@ -36,3 +37,19 @@ st.json({
     "Dividenda": st.session_state["dividend"],
     "Typ opce": st.session_state["option_type"]
 })
+
+
+
+# Výpočet ceny opce
+opt = Option(
+    S=float(st.session_state["S"]),
+    K=float(st.session_state["K"]),
+    T_days=float(st.session_state["T_days"]),
+    r=float(st.session_state["r"]),
+    sigma=float(st.session_state["sigma"]),
+    dividend=float(st.session_state["dividend"]),
+    option_type=st.session_state["option_type"]
+)
+
+# Zobrazení výsledku
+st.subheader(f"Cena opce: {opt.price()}")
