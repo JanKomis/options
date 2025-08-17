@@ -7,9 +7,9 @@ def test_option_price():
         S=142.27,
         K=142,
         T_days=25,
-        r=0.0175,
-        sigma=0.2269,
-        dividend=0.016,
+        r=1.75,
+        sigma=22.69,
+        dividend=1.6,
         option_type='call'
     )
 
